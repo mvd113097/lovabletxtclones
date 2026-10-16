@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev --host 0.0.0.0 --port 3000",
-    "build": "vite build",
+    "build": "NODE_ENV=production NITRO_PRESET=node-server vite build",
     "build:dev": "vite build --mode development",
-    "preview": "vite preview --host 0.0.0.0 --port 3000",
+    "preview": "NODE_ENV=production node .output/server/index.mjs",
+    "start": "NODE_ENV=production node .output/server/index.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",
     "test": "vitest run",

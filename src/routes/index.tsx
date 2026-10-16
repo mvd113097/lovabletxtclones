@@ -298,10 +298,17 @@ function Upload({ token, onDone }: { token: string; onDone: () => void }) {
 function NovelCard({ n, token, onChange }: { n: Novel; token: string; onChange: () => void }) {
   const setStatus = useServerFn(setNovelStatus);
   const [busy, setBusy] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const pct = n.total ? Math.floor((n.done / n.total) * 100) : 0;
   const incomplete = n.uploaded < n.total;
   const act = async (action: "start" | "pause" | "delete") => {
-    if (action === "delete" && !confirm(`Delete "${n.title}" permanently?`)) return;
+    if (action === "delete") {
+      if (!confirmDelete) {
+        setConfirmDelete(true);
+        setTimeout(() => setConfirmDelete(false), 4000);
+        return;
+      }
+    }
     setBusy(true);
     try {
       await setStatus({ data: { t: token, novelId: n.id, action } });
@@ -408,11 +415,15 @@ function NovelCard({ n, token, onChange }: { n: Novel; token: string; onChange: 
           </button>
         )}
         <button
-          className={`${btnGhost} ml-auto text-destructive`}
+          className={`${btnGhost} ml-auto ${
+            confirmDelete
+              ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              : "text-destructive"
+          }`}
           disabled={busy}
           onClick={() => act("delete")}
         >
-          Delete
+          {confirmDelete ? "Confirm delete?" : "Delete"}
         </button>
       </div>
     </article>
