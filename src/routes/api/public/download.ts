@@ -15,6 +15,8 @@ export const Route = createFileRoute("/api/public/download")({
         } catch {
           return new Response("Unauthorized", { status: 401 });
         }
+        const { hydrateFromFirestore } = await import("@/lib/db.server");
+        await hydrateFromFirestore();
         const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
         const { data: novel } = await supabaseAdmin
           .from("novels")

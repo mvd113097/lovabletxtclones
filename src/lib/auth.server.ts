@@ -39,17 +39,14 @@ export async function getSettings() {
   return data;
 }
 
-function signingKey(fallback?: string) {
-  const k =
-    process.env["SUPABASE_SERVICE_ROLE_KEY"] ||
-    fallback ||
-    "megatxt-selfcontained-auth-secret-key-32chars";
-  return k;
+function signingKey() {
+  return (
+    process.env["SUPABASE_SERVICE_ROLE_KEY"] || "megatxt-selfcontained-auth-secret-key-32chars"
+  );
 }
 
 export async function makeToken(passcodeHash: string) {
-  const s = await getSettings();
-  return hmac(signingKey(s?.cron_secret), `megatxt:${passcodeHash}`);
+  return hmac(signingKey(), `megatxt:${passcodeHash}`);
 }
 
 /** Throws if token does not match the current passcode. */

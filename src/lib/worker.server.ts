@@ -94,6 +94,8 @@ async function processOne(ch: {
 
 /** Runs translation for up to ~40 seconds. Called by the once-a-minute schedule. */
 export async function runTick() {
+  const { hydrateFromFirestore } = await import("./db.server");
+  await hydrateFromFirestore();
   const started = Date.now();
   let processed = 0;
   while (Date.now() - started < 35_000) {

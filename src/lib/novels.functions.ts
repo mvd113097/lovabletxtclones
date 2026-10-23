@@ -6,6 +6,8 @@ const tok = z.object({ t: z.string().nullable() });
 export const authStatus = createServerFn({ method: "POST" })
   .inputValidator((d) => tok.parse(d))
   .handler(async ({ data }) => {
+    const { hydrateFromFirestore } = await import("./db.server");
+    await hydrateFromFirestore();
     const { getSettings, makeToken } = await import("./auth.server");
     const s = await getSettings();
     if (!s.passcode_hash) return { state: "setup" as const };
@@ -145,6 +147,8 @@ export const listNovels = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const { requireToken } = await import("./auth.server");
     await requireToken(data.t);
+    const { hydrateFromFirestore } = await import("./db.server");
+    await hydrateFromFirestore(true);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const [{ data: novels }, { data: prog }] = await Promise.all([
       supabaseAdmin

@@ -13,6 +13,12 @@ export const Route = createFileRoute("/api/public/tick")({
         const r = await runTick();
         return Response.json(r);
       },
+      GET: async () => {
+        // Allows public webhook / cron-job.org / Cloud Scheduler to trigger translation in the cloud
+        const { runTick } = await import("@/lib/worker.server");
+        const r = await runTick();
+        return Response.json(r);
+      },
     },
   },
 });

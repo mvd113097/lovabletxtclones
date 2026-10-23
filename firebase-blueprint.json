@@ -1,0 +1,65 @@
+{
+  "entities": {
+    "novel": {
+      "title": "Novel",
+      "description": "Represents a translated novel project",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "running", "paused", "done"] },
+        "total_chapters": { "type": "number" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "finished_at": { "type": "string", "format": "date-time" },
+        "notified": { "type": "boolean" }
+      },
+      "required": ["id", "title", "status", "total_chapters", "created_at"]
+    },
+    "chapter": {
+      "title": "Chapter",
+      "description": "A single chapter of a novel",
+      "type": "object",
+      "properties": {
+        "novel_id": { "type": "string" },
+        "idx": { "type": "number" },
+        "title": { "type": "string" },
+        "source_text": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "working", "done"] },
+        "translated_title": { "type": "string" },
+        "translated_text": { "type": "string" },
+        "word_count": { "type": "number" },
+        "engine": { "type": "string" },
+        "locked_at": { "type": "string", "format": "date-time" },
+        "attempts": { "type": "number" },
+        "last_error": { "type": "string" },
+        "partial": { "type": "object" }
+      },
+      "required": ["novel_id", "idx", "source_text", "status"]
+    },
+    "settings": {
+      "title": "Settings",
+      "description": "App settings including passcodes and API keys",
+      "type": "object",
+      "properties": {
+        "passcode_hash": { "type": "string" },
+        "telegram_chat_id": { "type": "string" },
+        "gemini_api_key": { "type": "string" },
+        "cron_secret": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/novels/{novelId}": {
+      "schema": { "$ref": "#/entities/novel" },
+      "description": "Collection of novels"
+    },
+    "/chapters/{chapterId}": {
+      "schema": { "$ref": "#/entities/chapter" },
+      "description": "Collection of novel chapters"
+    },
+    "/settings/{settingsId}": {
+      "schema": { "$ref": "#/entities/settings" },
+      "description": "App global settings"
+    }
+  }
+}

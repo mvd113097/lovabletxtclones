@@ -1,6 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import {
+  saveNovelToFirestore,
+  deleteNovelFromFirestore,
+  saveChapterToFirestore,
+  saveSettingsToFirestore,
+  syncDownFromFirestore,
+} from "./firestore.server";
 
 export interface NovelRow {
   id: string;
@@ -64,8 +71,73 @@ export function getSavedGeminiKey(): string {
 }
 
 let dbData: DbData | null = null;
+let hasHydratedFromFirestore = false;
+let isHydratingFromFirestore = false;
+
+function saveDbLocalOnly() {
+  if (!dbData) return;
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(DATA_FILE, JSON.stringify(dbData, null, 2), "utf-8");
+  } catch (err) {
+    console.error("[MegaTXT DB] Failed to persist local cache:", err);
+  }
+}
+
+export async function hydrateFromFirestore(force = false) {
+  if (!force && (hasHydratedFromFirestore || isHydratingFromFirestore)) return;
+  isHydratingFromFirestore = true;
+  try {
+    const data = await syncDownFromFirestore();
+    if (data) {
+      const current = loadDb();
+      if (data.novels && data.novels.length > 0) {
+        const localMap = new Map(current.novels.map((n) => [n.id, n]));
+        for (const cloudNovel of data.novels) {
+          const local = localMap.get(cloudNovel.id);
+          if (!local) {
+            current.novels.push(cloudNovel);
+          } else {
+            local.status = cloudNovel.status;
+            local.finished_at = cloudNovel.finished_at;
+            local.total_chapters = cloudNovel.total_chapters;
+          }
+        }
+      }
+      if (data.chapters && data.chapters.length > 0) {
+        const localChapMap = new Map(current.chapters.map((c) => [`${c.novel_id}_${c.idx}`, c]));
+        for (const cloudChap of data.chapters) {
+          const key = `${cloudChap.novel_id}_${cloudChap.idx}`;
+          const local = localChapMap.get(key);
+          if (!local) {
+            current.chapters.push(cloudChap);
+          } else if (cloudChap.status === "done" && local.status !== "done") {
+            Object.assign(local, cloudChap);
+          }
+        }
+      }
+      if (data.settings && data.settings.passcode_hash) {
+        current.settings = data.settings;
+      }
+      saveDbLocalOnly();
+      console.log(
+        `[Firestore] Synced ${current.novels.length} novels and ${current.chapters.length} chapters.`,
+      );
+    }
+    hasHydratedFromFirestore = true;
+  } catch (err) {
+    console.warn("[Firestore] Hydration warning:", err);
+  } finally {
+    isHydratingFromFirestore = false;
+  }
+}
 
 function loadDb(): DbData {
+  if (!hasHydratedFromFirestore && !isHydratingFromFirestore) {
+    hydrateFromFirestore().catch(() => {});
+  }
   if (dbData) return dbData;
   try {
     if (fs.existsSync(DATA_FILE)) {
@@ -116,37 +188,63 @@ function saveDb() {
   }
 }
 
-// Global in-process tick scheduler
-let tickTimer: NodeJS.Timeout | null = null;
-let isTicking = false;
+// Self-perpetuating cloud translation loop: keeps active HTTP connections so Cloud Run never throttles CPU
+let tickActive = false;
 
 export function ensureTick() {
-  if (tickTimer) return;
-  tickTimer = setInterval(async () => {
-    if (isTicking) return;
-    try {
-      isTicking = true;
-      const { runTick } = await import("./worker.server");
-      await runTick();
-    } catch (err) {
-      console.warn("[MegaTXT Tick] Worker tick error:", err);
-    } finally {
-      isTicking = false;
+  if (tickActive) return;
+  tickActive = true;
+
+  (async () => {
+    console.log("[MegaTXT Background Engine] Starting background translation runner...");
+    while (tickActive) {
+      const db = loadDb();
+      const runningNovels = db.novels.filter((n) => n.status === "running");
+      if (!runningNovels.length) {
+        console.log("[MegaTXT Background Engine] No running novels. Runner idle.");
+        tickActive = false;
+        break;
+      }
+
+      const port = process.env.PORT || 3000;
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/api/public/tick`, {
+          signal: AbortSignal.timeout(50_000),
+        });
+        const data = (await res.json().catch(() => null)) as {
+          processed?: number;
+          remaining?: number;
+        } | null;
+        if (data && data.remaining === 0) {
+          console.log("[MegaTXT Background Engine] All chapters complete!");
+          tickActive = false;
+          break;
+        }
+      } catch {
+        // Fallback direct run if internal network is not yet ready
+        try {
+          const { runTick } = await import("./worker.server");
+          const r = await runTick();
+          if (r.remaining === 0) {
+            tickActive = false;
+            break;
+          }
+        } catch (innerErr) {
+          console.warn("[MegaTXT Background Engine] Worker cycle error:", innerErr);
+        }
+      }
+
+      // Small pause between batches
+      await new Promise((r) => setTimeout(r, 1500));
     }
-  }, 4000);
-  // Also run immediately on next tick
-  setImmediate(async () => {
-    if (isTicking) return;
-    try {
-      isTicking = true;
-      const { runTick } = await import("./worker.server");
-      await runTick();
-    } catch {
-      // Ignored
-    } finally {
-      isTicking = false;
-    }
+  })().catch((err) => {
+    console.error("[MegaTXT Background Engine] Uncaught error:", err);
+    tickActive = false;
   });
+}
+
+export function stopTick() {
+  tickActive = false;
 }
 
 // Auto-start worker if any novel is currently marked running
@@ -160,13 +258,6 @@ setTimeout(() => {
     // Ignored
   }
 }, 1000);
-
-export function stopTick() {
-  if (tickTimer) {
-    clearInterval(tickTimer);
-    tickTimer = null;
-  }
-}
 
 export function claimChapters(_limit: number): ChapterRow[] {
   const db = loadDb();
@@ -199,6 +290,7 @@ export function claimChapters(_limit: number): ChapterRow[] {
     c.status = "working";
     c.locked_at = nowIso;
     c.attempts = (c.attempts || 0) + 1;
+    saveChapterToFirestore(c).catch(() => {});
   }
   saveDb();
   return claimed;
@@ -358,8 +450,9 @@ class QueryBuilder {
           if (!options?.ignoreDuplicates) {
             Object.assign(existing, item);
           }
+          saveChapterToFirestore(existing).catch(() => {});
         } else {
-          db.chapters.push({
+          const ch: ChapterRow = {
             novel_id: item["novel_id"] as string,
             idx: item["idx"] as number,
             title: (item["title"] as string) ?? "",
@@ -373,7 +466,9 @@ class QueryBuilder {
             last_error: null,
             word_count: 0,
             partial: {},
-          });
+          };
+          db.chapters.push(ch);
+          saveChapterToFirestore(ch).catch(() => {});
         }
       }
       saveDb();
@@ -410,6 +505,7 @@ class QueryBuilder {
           };
           db.novels.unshift(item);
           saveDb();
+          saveNovelToFirestore(item).catch(() => {});
           const proj = this.project(item as unknown as Record<string, unknown>);
           resolve({ data: this.isSingle ? proj : [proj], error: null });
           return;
@@ -424,6 +520,10 @@ class QueryBuilder {
       if (this.isUpdate && this.updatePatch) {
         for (const r of matched) {
           Object.assign(r, this.updatePatch);
+          if (this.table === "novels") saveNovelToFirestore(r as NovelRow).catch(() => {});
+          if (this.table === "chapters") saveChapterToFirestore(r as ChapterRow).catch(() => {});
+          if (this.table === "app_settings")
+            saveSettingsToFirestore(r as AppSettingsRow).catch(() => {});
         }
         saveDb();
       } else if (this.isDelete) {
@@ -433,6 +533,9 @@ class QueryBuilder {
           db.novels = db.novels.filter((n) => !toDeleteIds.has(n.id));
           db.chapters = db.chapters.filter((c) => !toDeleteIds.has(c.novel_id));
           saveDb();
+          for (const toDelId of toDeleteIds) {
+            deleteNovelFromFirestore(toDelId).catch(() => {});
+          }
         }
       }
 

@@ -150,16 +150,21 @@ function Home({ token, onLocked }: { token: string; onLocked: () => void }) {
     refresh();
   }, [refresh]);
 
-  // Data-saving polling: only while something is running AND the screen is visible.
+  // Keep translation alive: pings every 15s while running to keep the Cloud Run container awake,
+  // and refreshes immediately when the user switches back to the tab.
   const running = novels?.some((n) => n.status === "running");
   useEffect(() => {
     if (!running) return;
-    const tick = () => document.visibilityState === "visible" && refresh();
-    const id = setInterval(tick, 30_000);
-    document.addEventListener("visibilitychange", tick);
+    const id = setInterval(() => {
+      refresh();
+    }, 15_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       clearInterval(id);
-      document.removeEventListener("visibilitychange", tick);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [running, refresh]);
 
@@ -245,7 +250,7 @@ function Upload({ token, onDone }: { token: string; onDone: () => void }) {
       }
       if (batch.length) await send();
       await setStatus({ data: { t: token, novelId: id, action: "start" } });
-      toast.success("Translation started. You can close this page.");
+      toast.success("Translation started in the cloud! You can close your browser.");
       setFile(null);
       setPreview(null);
       if (fileRef.current) fileRef.current.value = "";
@@ -387,6 +392,17 @@ function NovelCard({ n, token, onChange }: { n: Novel; token: string; onChange: 
         <p className="mt-1 text-xs text-muted-foreground">
           Ready to read: chapters 1–{n.ready} · {n.readyWords.toLocaleString()} words
         </p>
+      )}
+      {n.status === "running" && (
+        <div className="mt-2.5 flex items-center gap-2 rounded-lg bg-primary/10 px-3 py-1.5 text-xs text-primary">
+          <span className="relative flex h-2 w-2">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75"></span>
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-primary"></span>
+          </span>
+          <span>
+            Translating in Google Cloud — saves automatically. You can close your browser.
+          </span>
+        </div>
       )}
       {n.lastError && n.status === "running" && (
         <p className="mt-1 text-xs text-muted-foreground">
