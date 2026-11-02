@@ -173,6 +173,7 @@ export const listNovels = createServerFn({ method: "POST" })
         google: p?.google ?? 0,
         ready: p?.ready ?? 0,
         readyWords: Number(p?.ready_words ?? 0),
+        totalWords: Number(p?.total_words ?? p?.ready_words ?? 0),
         lastError: p?.last_error ?? null,
       };
     });

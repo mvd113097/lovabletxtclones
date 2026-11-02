@@ -80,7 +80,9 @@ function saveDbLocalOnly() {
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
-    fs.writeFileSync(DATA_FILE, JSON.stringify(dbData, null, 2), "utf-8");
+    const tmp = `${DATA_FILE}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(dbData, null, 2), "utf-8");
+    fs.renameSync(tmp, DATA_FILE);
   } catch (err) {
     console.error("[MegaTXT DB] Failed to persist local cache:", err);
   }
@@ -90,9 +92,10 @@ export async function hydrateFromFirestore(force = false) {
   if (!force && (hasHydratedFromFirestore || isHydratingFromFirestore)) return;
   isHydratingFromFirestore = true;
   try {
-    const data = await syncDownFromFirestore();
+    const current = loadDb();
+    const shouldFetchChapters = current.chapters.length === 0;
+    const data = await syncDownFromFirestore(shouldFetchChapters);
     if (data) {
-      const current = loadDb();
       if (data.novels && data.novels.length > 0) {
         const localMap = new Map(current.novels.map((n) => [n.id, n]));
         for (const cloudNovel of data.novels) {
@@ -140,8 +143,13 @@ function loadDb(): DbData {
   }
   if (dbData) return dbData;
   try {
-    if (fs.existsSync(DATA_FILE)) {
-      const raw = fs.readFileSync(DATA_FILE, "utf-8");
+    const fileToRead = fs.existsSync(DATA_FILE)
+      ? DATA_FILE
+      : fs.existsSync(`${DATA_FILE}.tmp`)
+        ? `${DATA_FILE}.tmp`
+        : null;
+    if (fileToRead) {
+      const raw = fs.readFileSync(fileToRead, "utf-8");
       const parsed = JSON.parse(raw) as Partial<DbData>;
       dbData = {
         settings: parsed.settings ?? getDefaultSettings(),
@@ -182,7 +190,9 @@ function saveDb() {
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
-    fs.writeFileSync(DATA_FILE, JSON.stringify(dbData, null, 2), "utf-8");
+    const tmp = `${DATA_FILE}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(dbData, null, 2), "utf-8");
+    fs.renameSync(tmp, DATA_FILE);
   } catch (err) {
     console.error("[MegaTXT DB] Failed to persist data:", err);
   }
@@ -290,7 +300,6 @@ export function claimChapters(_limit: number): ChapterRow[] {
     c.status = "working";
     c.locked_at = nowIso;
     c.attempts = (c.attempts || 0) + 1;
-    saveChapterToFirestore(c).catch(() => {});
   }
   saveDb();
   return claimed;
@@ -320,6 +329,13 @@ export function novelProgress() {
       readyWords += byIdx.get(i)?.word_count ?? 0;
     }
 
+    let totalWords = 0;
+    for (const c of nChapters) {
+      if (c.status === "done") {
+        totalWords += c.word_count ?? 0;
+      }
+    }
+
     const lastError =
       nChapters.find((c) => c.last_error && c.status !== "done")?.last_error ?? null;
 
@@ -330,6 +346,7 @@ export function novelProgress() {
       google,
       ready,
       ready_words: readyWords,
+      total_words: totalWords,
       last_error: lastError,
     };
   });

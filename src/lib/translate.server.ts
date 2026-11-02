@@ -24,19 +24,19 @@ export const FREE_MODELS = [
   "gemini-3.1-flash-lite",
   "gemini-flash-lite-latest",
   "gemini-3.5-flash-lite",
-  "gemini-3.8-flash",
-  "gemini-flash-latest",
 ];
 export const OWN_GEMINI_MODEL = FREE_MODELS[0]!;
 const cooldown = new Map<string, number>(); // `${model}|${key}` or `${model}|*` -> ready-at ms
 const lastUsed = new Map<string, number>();
 
-// Free tier ≈ 15 requests/min per project; 6s gap keeps each key ≤ 10/min.
+// Free tier allows up to 15 requests/min per key; 6s gap keeps each key <= 10/min.
 export const KEY_GAP_MS = 6000;
 
-/** How many chapters to translate at once: one per own key (min 3). */
+let keyCursor = 0;
+
+/** How many chapters to translate at once: one per own key (min 3, max 6). */
 export function parallelChapters() {
-  return Math.min(10, Math.max(3, ownKeys().length));
+  return Math.min(6, Math.max(3, ownKeys().length));
 }
 
 export const badKeys = new Set<string>();
@@ -70,17 +70,21 @@ export function retryDelayMs(body: string): number | null {
 
 async function ownGeminiCall(keys: string[], input: string): Promise<Map<number, string>> {
   let lastErr = "";
+  // Distribute parallel chapters across different keys so they run simultaneously
+  const offset = keyCursor++;
+  const rotatedKeys = keys.map((_, i) => keys[(i + offset) % keys.length]!);
+
   for (const model of FREE_MODELS) {
     const now = Date.now();
     if ((cooldown.get(`${model}|*`) ?? 0) > now) continue;
-    const ready = keys
+    const ready = rotatedKeys
       .filter((k) => (cooldown.get(`${model}|${k}`) ?? 0) <= now)
       .sort((a, b) => (lastUsed.get(a) ?? 0) - (lastUsed.get(b) ?? 0));
     for (const key of ready) {
       // Per-minute safety: never hit the same key more often than every KEY_GAP_MS.
       const wait = (lastUsed.get(key) ?? 0) + KEY_GAP_MS - Date.now();
       lastUsed.set(key, Date.now() + Math.max(0, wait));
-      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+      if (wait > 0 && wait < 4000) await new Promise((r) => setTimeout(r, wait));
       let res: Response;
       try {
         res = await fetch(
@@ -88,6 +92,7 @@ async function ownGeminiCall(keys: string[], input: string): Promise<Map<number,
           {
             method: "POST",
             headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+            signal: AbortSignal.timeout(60_000),
             body: JSON.stringify({
               systemInstruction: { parts: [{ text: SYSTEM }] },
               contents: [{ role: "user", parts: [{ text: input }] }],

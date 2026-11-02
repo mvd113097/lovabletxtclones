@@ -49,7 +49,20 @@ const input =
 function App() {
   const [token, setToken] = useState<string | null>(null);
   const [state, setState] = useState<"loading" | "setup" | "locked" | "ok">("loading");
+  const [inIframe, setInIframe] = useState(false);
   const status = useServerFn(authStatus);
+
+  useEffect(() => {
+    try {
+      setInIframe(
+        window.self !== window.top ||
+          window.location.hostname.includes("aistudio.google.com") ||
+          window.location.pathname.includes("/applet/"),
+      );
+    } catch {
+      setInIframe(true);
+    }
+  }, []);
 
   useEffect(() => {
     const t = localStorage.getItem(TOKEN_KEY);
@@ -74,6 +87,27 @@ function App() {
         </h1>
         {state === "ok" && token && <SettingsButton token={token} onToken={onToken} />}
       </header>
+      {inIframe && (
+        <div className="mb-6 rounded-xl border border-primary/30 bg-primary/10 p-3.5 text-xs text-foreground shadow-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="font-semibold text-primary">📱 Installing on your phone?</p>
+              <p className="mt-1 text-muted-foreground">
+                You are viewing this inside Google AI Studio. Opening the direct app link allows
+                Chrome to install the standalone app icon instead of opening aistudio.google.com.
+              </p>
+            </div>
+            <a
+              href={typeof window !== "undefined" ? window.location.href : "#"}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0 rounded-lg bg-primary px-3 py-1.5 font-semibold text-primary-foreground hover:bg-primary/90"
+            >
+              Open Direct App ↗
+            </a>
+          </div>
+        </div>
+      )}
       {state === "loading" && <p className="text-muted-foreground">Loading…</p>}
       {(state === "setup" || state === "locked") && (
         <Gate setup={state === "setup"} onToken={onToken} />
@@ -150,14 +184,16 @@ function Home({ token, onLocked }: { token: string; onLocked: () => void }) {
     refresh();
   }, [refresh]);
 
-  // Keep translation alive: pings every 15s while running to keep the Cloud Run container awake,
-  // and refreshes immediately when the user switches back to the tab.
+  // Mobile data saving: ONLY poll if a novel is actively running AND the page is in the foreground.
+  // When idle or when the screen is locked/minimized, ZERO requests are sent.
   const running = novels?.some((n) => n.status === "running");
   useEffect(() => {
     if (!running) return;
     const id = setInterval(() => {
-      refresh();
-    }, 15_000);
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        refresh();
+      }
+    }, 25_000);
     const onVisible = () => {
       if (document.visibilityState === "visible") refresh();
     };
@@ -552,6 +588,32 @@ function SettingsButton({ token, onToken }: { token: string; onToken: (t: string
                 minLength={4}
               />
             </label>
+            <div className="rounded-xl border border-border bg-card p-3 space-y-1.5">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                📱 Install on Phone / Direct Link
+              </h3>
+              <p className="text-xs text-muted-foreground">
+                To install without opening AI Studio, open this direct link in Chrome on your phone,
+                then tap ⋮ (menu) → <b>Install app</b>:
+              </p>
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  readOnly
+                  value={typeof window !== "undefined" ? window.location.origin : ""}
+                  className={`${input} font-mono text-xs`}
+                />
+                <button
+                  type="button"
+                  className={btnGhost}
+                  onClick={() => {
+                    navigator.clipboard.writeText(window.location.origin);
+                    toast.success("Direct link copied! Paste in Chrome on your phone.");
+                  }}
+                >
+                  Copy
+                </button>
+              </div>
+            </div>
             <div className="flex gap-2">
               <button className={btnPrimary}>Save</button>
               {connected && chatId && (

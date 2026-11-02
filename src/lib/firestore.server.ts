@@ -56,11 +56,11 @@ export function getFirestoreDb(): Firestore | null {
   }
 }
 
-/** Sync entire state down from Firestore (called on container boot) */
-export async function syncDownFromFirestore(): Promise<{
+/** Lite sync: only downloads novel metadata and settings (< 2 KB, avoids burning mobile data) */
+export async function syncDownFromFirestore(includeChapters = false): Promise<{
   settings?: AppSettingsRow;
   novels: NovelRow[];
-  chapters: ChapterRow[];
+  chapters?: ChapterRow[];
 } | null> {
   const db = getFirestoreDb();
   if (!db) return null;
@@ -69,17 +69,36 @@ export async function syncDownFromFirestore(): Promise<{
     const novels: NovelRow[] = [];
     novelsSnap.forEach((d) => novels.push(d.data() as NovelRow));
 
-    const chaptersSnap = await getDocs(collection(db, "chapters"));
-    const chapters: ChapterRow[] = [];
-    chaptersSnap.forEach((d) => chapters.push(d.data() as ChapterRow));
-
     const settingsSnap = await getDoc(doc(db, "settings", "app"));
     const settings = settingsSnap.exists() ? (settingsSnap.data() as AppSettingsRow) : undefined;
+
+    let chapters: ChapterRow[] | undefined;
+    if (includeChapters) {
+      const chaptersSnap = await getDocs(collection(db, "chapters"));
+      chapters = [];
+      chaptersSnap.forEach((d) => chapters!.push(d.data() as ChapterRow));
+    }
 
     return { settings, novels, chapters };
   } catch (err) {
     console.warn("[Firestore] Failed to sync down from Firestore:", err);
     return null;
+  }
+}
+
+/** Fetch chapters only for one specific novel on demand */
+export async function syncChaptersForNovel(novelId: string): Promise<ChapterRow[]> {
+  const db = getFirestoreDb();
+  if (!db) return [];
+  try {
+    const q = query(collection(db, "chapters"), where("novel_id", "==", novelId));
+    const snap = await getDocs(q);
+    const list: ChapterRow[] = [];
+    snap.forEach((d) => list.push(d.data() as ChapterRow));
+    return list;
+  } catch (err) {
+    console.warn(`[Firestore] Failed to sync chapters for novel ${novelId}:`, err);
+    return [];
   }
 }
 

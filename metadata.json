@@ -1,5 +1,7 @@
 {
   "name": "MegaTXT — Novel Translator",
   "description": "Upload a Chinese novel TXT and translate it to English in the background with Gemini and EPUB downloads.",
-  "capabilities": []
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
